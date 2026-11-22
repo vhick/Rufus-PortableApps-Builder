@@ -3,7 +3,7 @@
   "app_id": "RufusPortable",
   "app_name": "Rufus Portable",
   "publisher": "Pete Batard",
-  "package_revision": "b1r1",
+  "package_revision": "b1r2",
   "target_arch": "x64",
   "allowed_signer_name": "Akeo Consulting",
   "max_asset_bytes": 52428800,

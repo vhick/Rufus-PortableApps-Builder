@@ -13,3 +13,7 @@
 11. No guaranteed rollback across new Rufus profile migrations. The launcher backs up INI before binary change; users still need backups of all Data before switching major versions.
 12. `official` packaging engine is only a conditional, explicitly selected experimental attempt. It may not work on some PortableApps.com Installer versions. The community installer is independently generated and not officially certified.
 13. The first GitHub Actions run is **not confirmed** until logs are examined; local tests cannot replace Windows runner testing.
+
+## b1r2 preflight status
+
+The Windows CRLF parser regression from b1r1 is corrected and covered by explicit tests. No Windows launcher/installer/USB success is implied until a new GitHub Actions run completes.

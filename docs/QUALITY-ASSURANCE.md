@@ -29,3 +29,7 @@
 - **Never silently repair:** disabling signature checks, patching unrelated upstream source, overwriting old published releases, deleting unknown host data, skipping mandatory packager test, changing shared action pin.
 
 Runtime smoke tests test the **launcher with a fake application**. They do not prove the entire Rufus application works with every possible USB device and Windows installation. Keep this distinction in run reports.
+
+## b1r2 regression: Windows CRLF `appinfo.ini`
+
+Previously the CI preflight failed because a line-anchored version regex assumed Unix LF. Regression tests now explicitly create Windows CRLF INI with a UTF-8 BOM and verify independent ZIP checksums and integrity, plus rejection of invalid package versions and versions in the wrong INI section. The offline tests can run on Linux, but Windows GitHub Actions must independently confirm the fix.

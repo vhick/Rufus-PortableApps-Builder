@@ -44,6 +44,37 @@ class PackageTests(unittest.TestCase):
             create_zip(stage, target)
             self.assertEqual(validate_zip(target)['upstream_version'], '4.16')
 
+
+    def test_windows_crlf_appinfo_is_valid(self):
+        """Regression: b1r1 failed Windows preflight on valid CRLF INI files."""
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = self.setup_fixture(tmp)
+            ini = stage / 'App/AppInfo/appinfo.ini'
+            contents = ini.read_text(encoding='utf-8').replace('\r\n', '\n')
+            ini.write_bytes(b'\xef\xbb\xbf' + contents.replace('\n', '\r\n').encode('utf-8'))
+            target = Path(tmp) / 'windows-crlf.zip'
+            create_zip(stage, target)
+            self.assertEqual(validate_zip(target)['upstream_version'], '4.16')
+
+    def test_reject_invalid_three_part_version_even_with_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = self.setup_fixture(tmp)
+            ini = stage / 'App/AppInfo/appinfo.ini'
+            contents = ini.read_text(encoding='utf-8').replace('4.16.0.0', '4.16.0')
+            ini.write_bytes(contents.replace('\n', '\r\n').encode('utf-8'))
+            with self.assertRaisesRegex(ValueError, 'Missing 4-part PortableApps version'):
+                create_zip(stage, Path(tmp) / 'invalid-version.zip')
+
+    def test_reject_package_version_in_wrong_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = self.setup_fixture(tmp)
+            ini = stage / 'App/AppInfo/appinfo.ini'
+            contents = ini.read_text(encoding='utf-8')
+            contents = contents.replace('[Version]\nPackageVersion=4.16.0.0\n', '[Version]\n[Elsewhere]\nPackageVersion=4.16.0.0\n')
+            ini.write_bytes(contents.replace('\n', '\r\n').encode('utf-8'))
+            with self.assertRaisesRegex(ValueError, 'Missing 4-part PortableApps version'):
+                create_zip(stage, Path(tmp) / 'wrong-section.zip')
+
     def test_reject_user_data_inside_package(self):
         with tempfile.TemporaryDirectory() as tmp:
             stage = self.setup_fixture(tmp)

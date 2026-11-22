@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Independent checked PortableApps ZIP creation and release ZIP verification."""
 import argparse
+import configparser
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -34,9 +35,25 @@ def check_pe(blob, machine=None):
 
 
 def validate_info(info):
-    if '[Details]' not in info or 'AppID=RufusPortable' not in info or 'Start=RufusPortable.exe' not in info:
-        raise ValueError('PortableApps metadata missing expected launcher or AppID')
-    if not re.search(r'(?m)^PackageVersion=\d+(?:\.\d+){3}$', info):
+    """Validate real INI sections using platform-independent CRLF/LF parsing.
+
+    Windows PowerShell writes CRLF; re.MULTILINE regexes anchored with `$`
+    can miss a valid PackageVersion because of the preceding carriage return.
+    ConfigParser accepts CRLF, LF and mixed line endings while verifying that
+    a key really belongs to its required section.
+    """
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    try:
+        parser.read_string(info.lstrip('\ufeff'))
+    except configparser.Error as exc:
+        raise ValueError(f'PortableApps metadata is invalid INI: {exc}') from exc
+
+    if (parser.get('Format', 'Type', fallback='') != 'PortableApps.comFormat' or
+            parser.get('Details', 'AppID', fallback='') != 'RufusPortable' or
+            parser.get('Control', 'Start', fallback='') != 'RufusPortable.exe'):
+        raise ValueError('PortableApps metadata missing expected format, launcher or AppID')
+    version = parser.get('Version', 'PackageVersion', fallback='').strip()
+    if not re.fullmatch(r'\d+(?:\.\d+){3}', version):
         raise ValueError('Missing 4-part PortableApps version')
 
 

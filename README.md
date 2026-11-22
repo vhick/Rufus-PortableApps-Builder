@@ -1,8 +1,14 @@
-# Rufus PortableApps Independent Builder b1r1
+# Rufus PortableApps Independent Builder b1r2
 
 A standalone GitHub Actions builder for **official, digitally signed stable Rufus releases**. It creates a real `RufusPortable.exe` Windows C++ launcher, an independently validated `RufusPortable_*.zip`, and a separately identified independent NSIS `.paf.exe` installer using your existing pinned shared packager. The validated packages can be published with your pinned shared Release Publisher. The metadata targets PortableApps.com Format 3.9 (2026-03-02).
 
 **Important status:** The source and script fixtures were constructed offline. A real Windows GitHub Actions run, actual signature check, launcher compilation, installer production, and safe manual Rufus GUI acceptance test must still be completed. Do not claim this kit or an unknown future Rufus release has already passed those stages.
+
+## b1r2 Windows CI compatibility fix
+
+GitHub Actions run `121876713747` failed in the **preflight simulation tests**, before source compilation or packaging. The Windows test fixture wrote `appinfo.ini` with CRLF line endings. The original regex required the four-part version to be immediately followed by the end-of-line marker and incorrectly rejected the valid Windows INI (`Missing 4-part PortableApps version`).
+
+b1r2 replaces fragile line-anchored matching with strict, section-aware INI parsing that supports LF, CRLF, mixed newlines and UTF-8 BOM; retains the four-integer PackageVersion requirement; and adds explicit CRLF, invalid-version and wrong-section regression tests. The upstream Rufus payload, portable Data behavior, launcher and pinned shared integrations remain unchanged. All tests must pass on the actual GitHub Windows runner before treating b1r2 as validated.
 
 ## Why this design?
 
@@ -29,9 +35,9 @@ The launcher does not sweep arbitrary AppData, registry, TEMP, ProgramData or sy
 
 1. Make a **new, separate** GitHub repository, suggested name: `Rufus-PortableApps-Builder`. **Do not fork** `pbatard/rufus`.
 2. Choose **Public** if anyone should see the builder source and its releases. Choose **Private** if only you and authorized collaborators should access the release files. GitHub private releases stay in the private repository.
-3. Download and extract `Rufus_PortableApps_Builder_b1r1.zip`. Ensure hidden `.github` is included.
+3. Download and extract `Rufus_PortableApps_Builder_Kit_b1r2.zip`. Ensure hidden `.github` is included.
 4. In GitHub Desktop, choose **File → New Repository**; use the new repository folder. Choose **Repository → Show in Explorer**, and copy all extracted files and directories (including `.github`) there.
-5. In GitHub Desktop, enter **Summary**: `Initial Rufus PortableApps builder b1r1` and click **Commit to main**. Click **Publish repository** and choose the visibility already decided.
+5. For an existing builder repository, copy the b1r2 files **over the existing repository files**, preserving `.git` and all other user-created material. In GitHub Desktop, enter **Summary**: `Fix Windows CRLF preflight validation (b1r2)`, click **Commit to main**, then **Push origin**. For a new repository, use **Publish repository** after committing.
 6. On GitHub, choose **Actions**. Enable workflows if GitHub asks.
 7. Choose **Build Rufus PortableApps → Run workflow**. Leave the upstream version blank (automatic latest stable), choose `custom-nsis`, and check `publish_release` if you want the completed packages published.
 8. Open the completed Actions run. If green, look under **Releases** in your NEW builder repository. Download the `RufusPortable_*.zip` or independent `*.paf.exe` installer.
