@@ -1,8 +1,16 @@
-# Rufus PortableApps Independent Builder b1r2
+# Rufus PortableApps Independent Builder b1r3
 
 A standalone GitHub Actions builder for **official, digitally signed stable Rufus releases**. It creates a real `RufusPortable.exe` Windows C++ launcher, an independently validated `RufusPortable_*.zip`, and a separately identified independent NSIS `.paf.exe` installer using your existing pinned shared packager. The validated packages can be published with your pinned shared Release Publisher. The metadata targets PortableApps.com Format 3.9 (2026-03-02).
 
-**Important status:** The source and script fixtures were constructed offline. A real Windows GitHub Actions run, actual signature check, launcher compilation, installer production, and safe manual Rufus GUI acceptance test must still be completed. Do not claim this kit or an unknown future Rufus release has already passed those stages.
+**Important status:** GitHub Actions run `121889371100` verified the pinned shared actions, resolved upstream Rufus v4.16, cloned/audited its tag, and downloaded the official binary. It stopped compiling the C++ launcher because `MessageBoxW` was missing its `User32.lib` link dependency. **b1r3 includes that fix; its launcher, synthetic Windows fixture, installer and publishing have not yet been validated by a subsequent GitHub Actions run.** Do not claim unexecuted stages passed.
+
+## b1r3 Windows launcher link fix
+
+GitHub Actions run `121889371100` passed preflight, stable Rufus v4.16 release resolution, upstream source contract validation and official Rufus binary download. It failed in `Assemble standalone portable folder and compile native C++ launcher` with `LNK2019: __imp_MessageBoxW` and `LNK1120`.
+
+Microsoft documents that `MessageBoxW` requires **User32.lib**. The launcher now declares `#pragma comment(lib, "User32.lib")` alongside its other Windows import libraries so MSVC reliably resolves that symbol, including when invoked by future supported toolchain revisions. The build script no longer passes `/DWIN32_LEAN_AND_MEAN`, because the source already defines the macro. Three static regression tests check the required library, macro consistency and fatal linker-error handling. The Windows build workflow is unchanged: no upstream rebuild or shared infrastructure upgrade is needed.
+
+**Validation scope:** Offline tests check the source/build contract; they cannot substitute for MSVC link success on the GitHub-hosted Windows runner. Release publishing is still gated behind actual launcher compilation, runtime fixture, packaging and publisher dry-run.
 
 ## b1r2 Windows CI compatibility fix
 
@@ -35,9 +43,9 @@ The launcher does not sweep arbitrary AppData, registry, TEMP, ProgramData or sy
 
 1. Make a **new, separate** GitHub repository, suggested name: `Rufus-PortableApps-Builder`. **Do not fork** `pbatard/rufus`.
 2. Choose **Public** if anyone should see the builder source and its releases. Choose **Private** if only you and authorized collaborators should access the release files. GitHub private releases stay in the private repository.
-3. Download and extract `Rufus_PortableApps_Builder_Kit_b1r2.zip`. Ensure hidden `.github` is included.
+3. Download and extract `Rufus_PortableApps_Builder_Kit_b1r3.zip`. Ensure hidden `.github` is included.
 4. In GitHub Desktop, choose **File → New Repository**; use the new repository folder. Choose **Repository → Show in Explorer**, and copy all extracted files and directories (including `.github`) there.
-5. For an existing builder repository, copy the b1r2 files **over the existing repository files**, preserving `.git` and all other user-created material. In GitHub Desktop, enter **Summary**: `Fix Windows CRLF preflight validation (b1r2)`, click **Commit to main**, then **Push origin**. For a new repository, use **Publish repository** after committing.
+5. For an existing builder repository, copy the b1r3 files **over the existing repository files**, preserving `.git` and all other user-created material. In GitHub Desktop, enter **Summary**: `Fix Windows launcher User32 linkage (b1r3)`, click **Commit to main**, then **Push origin**. For a new repository, use **Publish repository** after committing.
 6. On GitHub, choose **Actions**. Enable workflows if GitHub asks.
 7. Choose **Build Rufus PortableApps → Run workflow**. Leave the upstream version blank (automatic latest stable), choose `custom-nsis`, and check `publish_release` if you want the completed packages published.
 8. Open the completed Actions run. If green, look under **Releases** in your NEW builder repository. Download the `RufusPortable_*.zip` or independent `*.paf.exe` installer.

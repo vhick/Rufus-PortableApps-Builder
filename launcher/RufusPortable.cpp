@@ -18,6 +18,9 @@
 #include <cstdio>
 #include <fstream>
 #include <cctype>
+// All Windows import libraries are declared beside the APIs that need them.
+// MessageBoxW is exported by User32.dll and requires User32.lib at link time.
+#pragma comment(lib, "User32.lib")
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Advapi32.lib")
 namespace fs = std::filesystem;

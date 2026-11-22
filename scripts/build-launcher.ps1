@@ -26,7 +26,7 @@ if errorlevel 1 exit /b 11
 where cl.exe >nul || exit /b 12
 where rc.exe >nul || exit /b 13
 rc.exe /nologo /fo "$resource" "$resourceScript" || exit /b 14
-cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN "$src" "$resource" /link /SUBSYSTEM:WINDOWS /OUT:"$rootExe" || exit /b 15
+cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 /DUNICODE /D_UNICODE "$src" "$resource" /link /SUBSYSTEM:WINDOWS /OUT:"$rootExe" || exit /b 15
 exit /b 0
 "@
 Set-Content -LiteralPath $cmd -Value $contents -Encoding ascii

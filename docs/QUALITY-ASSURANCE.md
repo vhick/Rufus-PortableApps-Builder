@@ -33,3 +33,9 @@ Runtime smoke tests test the **launcher with a fake application**. They do not p
 ## b1r2 regression: Windows CRLF `appinfo.ini`
 
 Previously the CI preflight failed because a line-anchored version regex assumed Unix LF. Regression tests now explicitly create Windows CRLF INI with a UTF-8 BOM and verify independent ZIP checksums and integrity, plus rejection of invalid package versions and versions in the wrong INI section. The offline tests can run on Linux, but Windows GitHub Actions must independently confirm the fix.
+
+## b1r3 MSVC linker regression check
+
+- Run `python -m unittest discover -s tests -p 'test_*.py' -v`. `test_launcher_linkage.py` verifies the `MessageBoxW` import library declaration, avoids duplicate `WIN32_LEAN_AND_MEAN`, and confirms link failures remain fatal.
+- Re-run the manual `Build Rufus PortableApps` GitHub Actions workflow. The first real Windows launcher compilation and synthetic runtime test are still required. Do not mark them successful based solely on offline tests.
+- Run `121889371100` proves preflight, stable tag auditing and official asset download but **not** launcher linking, fixture, ZIP packaging or installer creation.
