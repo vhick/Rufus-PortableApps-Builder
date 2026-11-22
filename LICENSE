@@ -1,0 +1,15 @@
+Rufus PortableApps Builder (independent builder repository)
+Copyright (c) 2026 contributors
+
+The builder's original scripts and C++ launcher are licensed under GNU GPL
+version 3 or (at your option) any later version.
+
+See https://www.gnu.org/licenses/gpl-3.0.html for the full license text.
+
+Rufus is a separate upstream project copyright Pete Batard and contributors;
+Rufus is GNU GPL v3-or-later. The official Rufus tagged release's original
+license is copied into Other/Source/UPSTREAM-LICENSE.txt inside generated
+PortableApps ZIPs. See https://github.com/pbatard/rufus/blob/master/LICENSE.txt
+
+Neither this independent builder nor its packages are official Rufus or
+PortableApps.com releases. 'PortableApps.com' is a trademark of its owners.

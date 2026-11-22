@@ -1,0 +1,196 @@
+name: Build Rufus PortableApps
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_version:
+        description: 'Blank = latest stable Rufus. Optional exact stable version (e.g. 4.16).'
+        required: false
+        default: ''
+        type: string
+      packaging_engine:
+        description: 'custom-nsis is independently built; official is experimental and requires tool URL + SHA256'
+        required: true
+        default: custom-nsis
+        type: choice
+        options:
+          - custom-nsis
+          - official
+      official_tool_url:
+        description: 'ONLY for official engine: authentic PortableApps.com Installer download URL'
+        required: false
+        default: ''
+        type: string
+      official_tool_sha256:
+        description: 'ONLY for official engine: exact vendor-published installer SHA256'
+        required: false
+        default: ''
+        type: string
+      publish_release:
+        description: 'Publish validated ZIP + installer to THIS builder repository'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rufus-portableapps-publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out independent builder repository
+        uses: actions/checkout@v7.0.1
+      - name: Set up Python for reproducible resolver and ZIP validation
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Preflight config and pinned shared action interfaces
+        id: config
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ENGINE: ${{ inputs.packaging_engine }}
+          OFFICIAL_URL: ${{ inputs.official_tool_url }}
+          OFFICIAL_SHA: ${{ inputs.official_tool_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/verify-shared.py
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned shared action preflight failed' }
+          if ($env:ENGINE -eq 'official') {
+            if (-not $env:OFFICIAL_URL.StartsWith('https://')) { throw 'Experimental official engine requires authenticated official HTTPS installer URL' }
+            if ($env:OFFICIAL_SHA -notmatch '^[a-fA-F0-9]{64}$') { throw 'Experimental official engine requires authentic vendor SHA256' }
+          }
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Future-release simulation tests failed' }
+          $revision=(Get-Content -Raw config/builder.json | ConvertFrom-Json).package_revision
+          if ($revision -notmatch '^[a-zA-Z0-9_-]+$') { throw 'Invalid configured package revision' }
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+      - name: Resolve the latest supported official stable upstream release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.upstream_version }}
+        run: |
+          python scripts/resolve.py resolve --version "$env:REQUESTED_VERSION" --output work/resolve.json
+          if ($LASTEXITCODE -ne 0) { throw 'Stable source release resolution failed' }
+      - name: Guard previously published immutable release
+        id: guard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check-release.py --version '${{ steps.release.outputs.version }}' --revision '${{ steps.config.outputs.revision }}' 
+          if ($LASTEXITCODE -ne 0) { throw 'Duplicate release guard failed' }
+      - name: Clone exact matching upstream release source for audit only
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          git -c advice.detachedHead=false clone --depth 1 --branch '${{ steps.release.outputs.upstream_tag }}' https://github.com/pbatard/rufus.git work/source
+          if ($LASTEXITCODE -ne 0) { throw 'Official tagged source clone failed; do not use master as a fallback' }
+          git -C work/source status --porcelain
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify tagged source checkout' }
+      - name: Validate source portability contract at exact upstream tag
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          python scripts/audit.py --source work/source --metadata work/resolve.json --output work/source-audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream storage contract changed; no package can be published' }
+      - name: Download the official signed Rufus portable executable
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/resolve.py download --metadata work/resolve.json --output work/official-rufus.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Official Rufus download or PE validation failed' }
+      - name: Assemble standalone portable folder and compile native C++ launcher
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          & ./scripts/stage.ps1 -Metadata work/resolve.json -Audit work/source-audit.json -Binary work/official-rufus.exe -Stage work/stage/RufusPortable
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed' }
+      - name: Run non-destructive Windows runtime and TraceGuard fixture
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          & ./tests/runtime-fixture.ps1 -Launcher work/stage/RufusPortable/RufusPortable.exe
+      - name: Record actual MSVC compiler, launcher SHA and passed runtime fixture
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          & ./scripts/finalize.ps1 -Stage work/stage/RufusPortable
+      - name: Generate independently validated PortableApps ZIP
+        if: steps.guard.outputs.skip != 'true'
+        id: zip
+        run: |
+          $meta=Get-Content -Raw work/resolve.json | ConvertFrom-Json
+          $config=Get-Content -Raw config/builder.json | ConvertFrom-Json
+          $out="dist/RufusPortable_$($meta.version)_$($config.package_revision).zip"
+          python scripts/package.py create --stage work/stage/RufusPortable --output $out
+          if ($LASTEXITCODE -ne 0) { throw 'PortableApps ZIP verification failed' }
+          "zip_path=$out" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Build independent NSIS (or explicitly selected experimental official) installer
+        if: steps.guard.outputs.skip != 'true'
+        id: packager
+        uses: vhick/Portable-Package-Builder@v1.0.0
+        with:
+          source-dir: work/stage/RufusPortable
+          output-dir: dist
+          engine: ${{ inputs.packaging_engine }}
+          running-exe: App\Rufus\rufus.exe
+          package-revision: ${{ steps.config.outputs.revision }}
+          official-tool-url: ${{ inputs.official_tool_url }}
+          official-tool-sha256: ${{ inputs.official_tool_sha256 }}
+      - name: Validate both completed files and actual installer provenance
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          python scripts/package.py verify --zip '${{ steps.zip.outputs.zip_path }}'
+          if ($LASTEXITCODE -ne 0) { throw 'ZIP failed post-package validation' }
+          $installer='${{ steps.packager.outputs.installer-file }}'
+          if (-not (Test-Path -LiteralPath $installer)) { throw 'Shared packager did not return installer-file' }
+          if ($installer -notmatch '\.paf\.exe$') { throw 'Unexpected shared packager filename' }
+          $sha=(Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne '${{ steps.packager.outputs.installer-sha256 }}') { throw 'Shared installer output hash mismatch' }
+          $bytes=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $installer).Path)
+          if ($bytes.Length -lt 2048 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Shared installer is not a PE candidate' }
+          "### Validated Rufus ${{ steps.release.outputs.version }} package ${{ steps.config.outputs.revision }}" >> $env:GITHUB_STEP_SUMMARY
+          "- Source repo: https://github.com/pbatard/rufus" >> $env:GITHUB_STEP_SUMMARY
+          "- Verified official signed payload; local SHA-256 in ZIP manifest" >> $env:GITHUB_STEP_SUMMARY
+          "- Synthetic launcher, INI, empty-folder, crash-journal and relocation fixture completed" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: $([IO.Path]::GetFileName($installer)) (${{ inputs.packaging_engine }})" >> $env:GITHUB_STEP_SUMMARY
+          "- Actual Rufus USB and host-side effects: manual acceptance test required" >> $env:GITHUB_STEP_SUMMARY
+      - name: Publisher dry-run (never publish without a successful dry-run)
+        if: steps.guard.outputs.skip != 'true' && inputs.publish_release
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: |
+            dist/*.zip
+            dist/*.paf.exe
+          tag: ${{ steps.guard.outputs.release_tag }}
+          release-title: Rufus ${{ steps.release.outputs.version }} PortableApps (${{ steps.config.outputs.revision }})
+          tag-prefix: portable-
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'true'
+      - name: Publish completed packages to THIS repository only
+        if: steps.guard.outputs.skip != 'true' && inputs.publish_release
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: |
+            dist/*.zip
+            dist/*.paf.exe
+          tag: ${{ steps.guard.outputs.release_tag }}
+          release-title: Rufus ${{ steps.release.outputs.version }} PortableApps (${{ steps.config.outputs.revision }})
+          tag-prefix: portable-
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'false'
+      - name: Preserve independent ZIP as a failure diagnostic (only if installer fails)
+        if: failure() && steps.zip.outcome == 'success'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: rufus-zip-installer-failed
+          path: dist/*.zip
+          retention-days: 3
+          if-no-files-found: ignore

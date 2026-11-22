@@ -1,0 +1,21 @@
+name: Check Rufus and Builder Compatibility (No Publishing)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Read-only stable release and pinned integration checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/verify-shared.py
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python scripts/maintenance.py

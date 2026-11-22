@@ -1,0 +1,130 @@
+name: Rebuild Installer From Validated Release ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_release_tag:
+        description: 'Existing trusted builder release tag containing RufusPortable ZIP + SHA256SUMS.txt'
+        required: true
+        type: string
+      package_revision:
+        description: 'Unique revision for NEW installer release (e.g. repack1)'
+        required: true
+        default: repack1
+        type: string
+      packaging_engine:
+        description: 'Installer engine'
+        default: custom-nsis
+        type: choice
+        options: [custom-nsis, official]
+      official_tool_url:
+        description: 'Only for official engine'
+        required: false
+        type: string
+      official_tool_sha256:
+        description: 'Only for official engine'
+        required: false
+        type: string
+      publish_release:
+        description: 'Publish this newly packaged installer'
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+concurrency:
+  group: rufus-portableapps-publish
+  cancel-in-progress: false
+jobs:
+  repackage:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Check pinned packager/publisher interfaces
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/verify-shared.py
+          if ($LASTEXITCODE -ne 0) { throw 'Shared action tag interface failure' }
+      - name: Download checksummed builder release ZIP from this repository
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_TAG: ${{ inputs.source_release_tag }}
+          PACKAGE_REVISION: ${{ inputs.package_revision }}
+          ENGINE: ${{ inputs.packaging_engine }}
+          TOOL_URL: ${{ inputs.official_tool_url }}
+          TOOL_SHA: ${{ inputs.official_tool_sha256 }}
+        run: |
+          if ($env:PACKAGE_REVISION -notmatch '^[a-zA-Z0-9_-]+$') { throw 'Invalid package revision' }
+          if ($env:SOURCE_TAG -notmatch '^portable-v[0-9]+\.[0-9]+(?:\.[0-9]+)*-[a-zA-Z0-9_-]+$') { throw 'Invalid originating release tag' }
+          if ($env:ENGINE -eq 'official' -and (-not $env:TOOL_URL.StartsWith('https://') -or $env:TOOL_SHA -notmatch '^[a-fA-F0-9]{64}$')) { throw 'Official engine requires the authentic URL and vendor hash' }
+          New-Item -ItemType Directory -Path work/download -Force | Out-Null
+          gh release download $env:SOURCE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'RufusPortable*.zip' --dir work/download
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download official builder release ZIP' }
+          gh release download $env:SOURCE_TAG --repo $env:GITHUB_REPOSITORY --pattern 'SHA256SUMS.txt' --dir work/download
+          if ($LASTEXITCODE -ne 0) { throw 'Release is missing original publisher SHA256SUMS.txt' }
+          $zips=@(Get-ChildItem -LiteralPath work/download -Filter '*.zip' -File)
+          if ($zips.Count -ne 1) { throw "Expected exactly one original ZIP; found $($zips.Count)" }
+          python scripts/verify-release.py --zip $zips[0].FullName --sums work/download/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Original builder Release ZIP provenance validation failed' }
+          "zip=$($zips[0].FullName)" >> $env:GITHUB_OUTPUT
+          $manifest = python -c "import json,zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); print(json.load(z.open('RufusPortable/Other/Source/build-manifest.json'))['upstream_version'])" $zips[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read embedded original version' }
+          "version=$manifest" >> $env:GITHUB_OUTPUT
+          "new_tag=portable-v$manifest-$env:PACKAGE_REVISION" >> $env:GITHUB_OUTPUT
+          python scripts/check-release.py --version $manifest --revision $env:PACKAGE_REVISION --error-if-exists
+          if ($LASTEXITCODE -ne 0) { throw 'Immutable new installer release tag collision' }
+      - name: Extract safe input ZIP only after full path/CRC/checksum validation
+        run: |
+          $zip='${{ steps.source.outputs.zip }}'
+          Expand-Archive -LiteralPath $zip -DestinationPath work/extracted -Force
+          if (-not (Test-Path work/extracted/RufusPortable/RufusPortable.exe)) { throw 'Portable root launcher missing' }
+          $official='work/extracted/RufusPortable/App/Rufus/rufus.exe'
+          $signature=Get-AuthenticodeSignature -LiteralPath $official
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Akeo Consulting') { throw 'Original upstream EXE signature failed independent packaging-only verification' }
+      - name: Shared installer build with no upstream recompilation
+        id: packager
+        uses: vhick/Portable-Package-Builder@v1.0.0
+        with:
+          source-dir: work/extracted/RufusPortable
+          output-dir: dist
+          engine: ${{ inputs.packaging_engine }}
+          running-exe: App\Rufus\rufus.exe
+          package-revision: ${{ inputs.package_revision }}
+          official-tool-url: ${{ inputs.official_tool_url }}
+          official-tool-sha256: ${{ inputs.official_tool_sha256 }}
+      - name: Verify generated installer checksum
+        run: |
+          $path='${{ steps.packager.outputs.installer-file }}'
+          if (-not (Test-Path $path)) { throw 'No installer returned by shared action' }
+          $sha=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne '${{ steps.packager.outputs.installer-sha256 }}') { throw 'Shared installer hash mismatch' }
+      - name: Publisher dry-run for independent new revision
+        if: inputs.publish_release
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: dist/*.paf.exe
+          tag: ${{ steps.source.outputs.new_tag }}
+          release-title: Rufus ${{ steps.source.outputs.version }} PortableApps Installer (${{ inputs.package_revision }})
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'true'
+      - name: Publish installer-only revision
+        if: inputs.publish_release
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: dist/*.paf.exe
+          tag: ${{ steps.source.outputs.new_tag }}
+          release-title: Rufus ${{ steps.source.outputs.version }} PortableApps Installer (${{ inputs.package_revision }})
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'false'

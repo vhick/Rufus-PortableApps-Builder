@@ -1,0 +1,9 @@
+{
+  "status": "uninitialized",
+  "note": "Populated as an evidence record after the first successful GitHub Actions build. Never assume the bundled kit has been live-tested on Windows.",
+  "upstream_version": null,
+  "source_commit": null,
+  "binary_sha256": null,
+  "launcher_sha256": null,
+  "last_validated_release_tag": null
+}
