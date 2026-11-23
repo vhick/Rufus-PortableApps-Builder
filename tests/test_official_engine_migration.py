@@ -43,7 +43,7 @@ class OfficialSourceIntegration(unittest.TestCase):
         self.assertIn('scripts/normalize-appinfo-for-official.py', self.repack)
         self.assertIn('scripts/verify-release.py', self.repack)
         self.assertIn('Get-AuthenticodeSignature', self.repack)
-        self.assertEqual(self.conf['package_revision'], 'b1r4')
+        self.assertEqual(self.conf['package_revision'], 'b1r5')
 
     def test_no_unreviewed_publish_and_artifacts(self):
         for wf in (self.main, self.repack):

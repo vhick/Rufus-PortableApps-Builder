@@ -113,6 +113,11 @@ jobs:
         run: |
           python scripts/normalize-appinfo-for-official.py --root work/stage/RufusPortable
           if ($LASTEXITCODE -ne 0) { throw 'Official-source appinfo.ini compatibility validation failed' }
+      - name: Add genuine PortableApps root help page for official engine
+        if: steps.guard.outputs.skip != 'true' && inputs.packaging_engine == 'official'
+        run: |
+          python scripts/ensure-official-help.py --root work/stage/RufusPortable
+          if ($LASTEXITCODE -ne 0) { throw 'Required official installer root help.html is missing or invalid' }
       - name: Record actual MSVC compiler, launcher SHA and passed runtime fixture
         if: steps.guard.outputs.skip != 'true'
         run: |

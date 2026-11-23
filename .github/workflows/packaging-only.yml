@@ -94,6 +94,11 @@ jobs:
         run: |
           python scripts/normalize-appinfo-for-official.py --root work/extracted/RufusPortable
           if ($LASTEXITCODE -ne 0) { throw 'Original ZIP metadata incompatible with official source; only the display label may be adjusted' }
+      - name: Ensure official installer HTML prerequisite in verified extracted package
+        if: inputs.packaging_engine == 'official'
+        run: |
+          python scripts/ensure-official-help.py --root work/extracted/RufusPortable
+          if ($LASTEXITCODE -ne 0) { throw 'Required official installer root help.html is missing or invalid' }
       - name: Shared source-based or custom installer build without recompiling Rufus
         id: packager
         uses: vhick/Portable-Package-Builder@78da3c258bd7da63740d94b4b40902dde82f7df3
