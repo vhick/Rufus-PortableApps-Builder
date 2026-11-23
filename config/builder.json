@@ -3,11 +3,11 @@
   "app_id": "RufusPortable",
   "app_name": "Rufus Portable",
   "publisher": "Pete Batard",
-  "package_revision": "b1r3",
+  "package_revision": "b1r4",
   "target_arch": "x64",
   "allowed_signer_name": "Akeo Consulting",
   "max_asset_bytes": 52428800,
-  "package_builder": "vhick/Portable-Package-Builder@v1.0.0",
+  "package_builder": "vhick/Portable-Package-Builder@78da3c258bd7da63740d94b4b40902dde82f7df3",
   "release_publisher": "vhick/portable-release-publisher@v1.1.1",
   "release_policy": "only officially signed portable x64 executable; stop on architecture or portability source-contract changes"
 }

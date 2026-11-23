@@ -9,27 +9,17 @@ on:
         default: ''
         type: string
       packaging_engine:
-        description: 'custom-nsis is independently built; official is experimental and requires tool URL + SHA256'
+        description: 'custom-nsis or genuine PortableApps.com Installer 3.9.24 source (no installer download)'
         required: true
         default: custom-nsis
         type: choice
         options:
           - custom-nsis
           - official
-      official_tool_url:
-        description: 'ONLY for official engine: authentic PortableApps.com Installer download URL'
-        required: false
-        default: ''
-        type: string
-      official_tool_sha256:
-        description: 'ONLY for official engine: exact vendor-published installer SHA256'
-        required: false
-        default: ''
-        type: string
       publish_release:
-        description: 'Publish validated ZIP + installer to THIS builder repository'
+        description: 'Publish validated ZIP + selected installer to THIS builder repository (uncheck for first test)'
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -53,21 +43,16 @@ jobs:
         uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
-      - name: Preflight config and pinned shared action interfaces
+      - name: Preflight pinned source-based packager and regression tests
         id: config
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ENGINE: ${{ inputs.packaging_engine }}
-          OFFICIAL_URL: ${{ inputs.official_tool_url }}
-          OFFICIAL_SHA: ${{ inputs.official_tool_sha256 }}
         run: |
           $ErrorActionPreference = 'Stop'
+          if ($env:ENGINE -notin @('custom-nsis','official')) { throw "Unsupported packaging engine: $env:ENGINE" }
           python scripts/verify-shared.py
           if ($LASTEXITCODE -ne 0) { throw 'Pinned shared action preflight failed' }
-          if ($env:ENGINE -eq 'official') {
-            if (-not $env:OFFICIAL_URL.StartsWith('https://')) { throw 'Experimental official engine requires authenticated official HTTPS installer URL' }
-            if ($env:OFFICIAL_SHA -notmatch '^[a-fA-F0-9]{64}$') { throw 'Experimental official engine requires authentic vendor SHA256' }
-          }
           python -m unittest discover -s tests -p 'test_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Future-release simulation tests failed' }
           $revision=(Get-Content -Raw config/builder.json | ConvertFrom-Json).package_revision
@@ -81,13 +66,20 @@ jobs:
         run: |
           python scripts/resolve.py resolve --version "$env:REQUESTED_VERSION" --output work/resolve.json
           if ($LASTEXITCODE -ne 0) { throw 'Stable source release resolution failed' }
-      - name: Guard previously published immutable release
+      - name: Guard immutable publication (allow repeatable unpublished test runs)
         id: guard
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
-          python scripts/check-release.py --version '${{ steps.release.outputs.version }}' --revision '${{ steps.config.outputs.revision }}' 
-          if ($LASTEXITCODE -ne 0) { throw 'Duplicate release guard failed' }
+          if ($env:PUBLISH_RELEASE -eq 'true') {
+            python scripts/check-release.py --version '${{ steps.release.outputs.version }}' --revision '${{ steps.config.outputs.revision }}'
+            if ($LASTEXITCODE -ne 0) { throw 'Duplicate release guard failed' }
+          } else {
+            # An unpublished smoke test is safe to rerun even after a release exists.
+            'skip=false' >> $env:GITHUB_OUTPUT
+            'release_tag=portable-v${{ steps.release.outputs.version }}-${{ steps.config.outputs.revision }}' >> $env:GITHUB_OUTPUT
+          }
       - name: Clone exact matching upstream release source for audit only
         if: steps.guard.outputs.skip != 'true'
         run: |
@@ -116,6 +108,11 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: |
           & ./tests/runtime-fixture.ps1 -Launcher work/stage/RufusPortable/RufusPortable.exe
+      - name: Normalize Rufus display label for official-source compiler only
+        if: steps.guard.outputs.skip != 'true' && inputs.packaging_engine == 'official'
+        run: |
+          python scripts/normalize-appinfo-for-official.py --root work/stage/RufusPortable
+          if ($LASTEXITCODE -ne 0) { throw 'Official-source appinfo.ini compatibility validation failed' }
       - name: Record actual MSVC compiler, launcher SHA and passed runtime fixture
         if: steps.guard.outputs.skip != 'true'
         run: |
@@ -130,18 +127,16 @@ jobs:
           python scripts/package.py create --stage work/stage/RufusPortable --output $out
           if ($LASTEXITCODE -ne 0) { throw 'PortableApps ZIP verification failed' }
           "zip_path=$out" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-      - name: Build independent NSIS (or explicitly selected experimental official) installer
+      - name: Build selected PortableApps installer (custom NSIS or offline official source)
         if: steps.guard.outputs.skip != 'true'
         id: packager
-        uses: vhick/Portable-Package-Builder@v1.0.0
+        uses: vhick/Portable-Package-Builder@78da3c258bd7da63740d94b4b40902dde82f7df3
         with:
           source-dir: work/stage/RufusPortable
           output-dir: dist
           engine: ${{ inputs.packaging_engine }}
           running-exe: App\Rufus\rufus.exe
           package-revision: ${{ steps.config.outputs.revision }}
-          official-tool-url: ${{ inputs.official_tool_url }}
-          official-tool-sha256: ${{ inputs.official_tool_sha256 }}
       - name: Validate both completed files and actual installer provenance
         if: steps.guard.outputs.skip != 'true'
         run: |
@@ -154,12 +149,33 @@ jobs:
           if ($sha -ne '${{ steps.packager.outputs.installer-sha256 }}') { throw 'Shared installer output hash mismatch' }
           $bytes=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $installer).Path)
           if ($bytes.Length -lt 2048 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Shared installer is not a PE candidate' }
+          $engine='${{ inputs.packaging_engine }}'
+          if ($engine -eq 'official') {
+            if ('${{ steps.packager.outputs.official-installer-file }}' -ne $installer) { throw 'Official engine did not return official-installer-file' }
+            if ('${{ steps.packager.outputs.official-installer-sha256 }}' -ne $sha) { throw 'Official engine did not return matching official-installer-sha256' }
+          } else {
+            if ('${{ steps.packager.outputs.custom-installer-file }}' -ne $installer) { throw 'Custom engine did not return custom-installer-file' }
+            if ('${{ steps.packager.outputs.custom-installer-sha256 }}' -ne $sha) { throw 'Custom engine did not return matching custom-installer-sha256' }
+          }
           "### Validated Rufus ${{ steps.release.outputs.version }} package ${{ steps.config.outputs.revision }}" >> $env:GITHUB_STEP_SUMMARY
           "- Source repo: https://github.com/pbatard/rufus" >> $env:GITHUB_STEP_SUMMARY
-          "- Verified official signed payload; local SHA-256 in ZIP manifest" >> $env:GITHUB_STEP_SUMMARY
-          "- Synthetic launcher, INI, empty-folder, crash-journal and relocation fixture completed" >> $env:GITHUB_STEP_SUMMARY
-          "- Installer: $([IO.Path]::GetFileName($installer)) (${{ inputs.packaging_engine }})" >> $env:GITHUB_STEP_SUMMARY
-          "- Actual Rufus USB and host-side effects: manual acceptance test required" >> $env:GITHUB_STEP_SUMMARY
+          "- Verified official signed Rufus payload; SHA-256 recorded in ZIP manifest" >> $env:GITHUB_STEP_SUMMARY
+          "- Launcher synthetic runtime and TraceGuard fixture completed" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: $([IO.Path]::GetFileName($installer)) ($engine)" >> $env:GITHUB_STEP_SUMMARY
+          "- Packager: official-source r4 pinned Git commit 78da3c2; no vendor tool download" >> $env:GITHUB_STEP_SUMMARY
+          "- Actual Rufus USB operations and installer upgrade preservation: manual acceptance test required" >> $env:GITHUB_STEP_SUMMARY
+      - name: Upload successful packages for private testing without publishing a release
+        if: steps.guard.outputs.skip != 'true' && !inputs.publish_release
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: rufus-${{ steps.release.outputs.version }}-${{ steps.config.outputs.revision }}-${{ inputs.packaging_engine }}-test
+          path: |
+            dist/*.zip
+            dist/*.paf.exe
+            dist/*.paf.exe.sha256
+            dist/*.paf.exe.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Publisher dry-run (never publish without a successful dry-run)
         if: steps.guard.outputs.skip != 'true' && inputs.publish_release
         uses: vhick/portable-release-publisher@v1.1.1
